@@ -6,6 +6,11 @@ import (
 	"sync"
 )
 
+var (
+	ErrAlreadyListing        = errors.New("listener already exisits")
+	ErrRegisteringSubscriber = func(err error) error { return fmt.Errorf("error while registering subscriber: %s", err.Error()) }
+)
+
 type fn = func(interface{}) error
 
 type AsyncEmitter interface {
@@ -31,7 +36,7 @@ func (e *Goasynem) on(evt string, f fn) error {
 	defer e.mu.Unlock()
 	e.create()
 	if _, ok := e.listeners[evt]; ok {
-		return errors.New("listener already exisits")
+		return ErrAlreadyListing
 	}
 	e.listeners[evt] = f
 	return nil
@@ -40,7 +45,7 @@ func (e *Goasynem) on(evt string, f fn) error {
 func (e *Goasynem) Subscribe(event string, f func(interface{}) error) error {
 	err := e.on(event, f)
 	if err != nil {
-		return fmt.Errorf("error while registering subscriber: %s", err.Error())
+		return ErrRegisteringSubscriber(err)
 	}
 	return nil
 }
