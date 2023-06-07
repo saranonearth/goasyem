@@ -8,19 +8,25 @@ import (
 
 type fn = func(interface{}) error
 
-type Emitter struct {
+type AsyncEmitter interface {
+	create()
+	on(evt string, f fn) error
+	Subscribe(event string, f func(interface{}) error) error
+	Emit(evt string, d interface{}) chan error
+}
+type Goasynem struct {
 	mu        sync.Mutex
 	once      sync.Once
 	listeners map[string]fn
 }
 
-func (e *Emitter) create() {
+func (e *Goasynem) create() {
 	e.once.Do(func() {
 		e.listeners = make(map[string]fn)
 	})
 }
 
-func (e *Emitter) on(evt string, f fn) error {
+func (e *Goasynem) on(evt string, f fn) error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.create()
@@ -31,7 +37,7 @@ func (e *Emitter) on(evt string, f fn) error {
 	return nil
 }
 
-func (e *Emitter) Subscribe(event string, f func(interface{}) error) error {
+func (e *Goasynem) Subscribe(event string, f func(interface{}) error) error {
 	err := e.on(event, f)
 	if err != nil {
 		return fmt.Errorf("error while registering subscriber: %s", err.Error())
@@ -39,7 +45,7 @@ func (e *Emitter) Subscribe(event string, f func(interface{}) error) error {
 	return nil
 }
 
-func (e *Emitter) Emit(evt string, d interface{}) chan error {
+func (e *Goasynem) Emit(evt string, d interface{}) chan error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
