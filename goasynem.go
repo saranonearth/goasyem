@@ -2,89 +2,64 @@ package goasynem
 
 import (
 	"errors"
+	"fmt"
 	"sync"
 )
 
-type AsyncEmitter interface {
-	create()
-	Subscribe(event string, f func(interface{})) (chan interface{}, error)
-	on(event string) (chan interface{}, error)
-	Emit(event string, payload interface{}) (chan struct{}, error)
-}
+type fn = func(interface{}) error
 
-type Goasynem struct {
+type Emitter struct {
+	mu        sync.Mutex
 	once      sync.Once
-	mx        sync.Mutex
-	listeners map[string]chan interface{}
+	listeners map[string]fn
 }
 
-func (e *Goasynem) create() {
+func (e *Emitter) create() {
 	e.once.Do(func() {
-		e.listeners = make(map[string]chan interface{})
+		e.listeners = make(map[string]fn)
 	})
 }
 
-func (e *Goasynem) on(event string) (chan interface{}, error) {
-	e.mx.Lock()
-	defer e.mx.Unlock()
+func (e *Emitter) on(evt string, f fn) error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
 	e.create()
-	ch := make(chan interface{})
-	if _, ok := e.listeners[event]; ok {
-		return nil, errors.New("listener already exisits")
+	if _, ok := e.listeners[evt]; ok {
+		return errors.New("listener already exisits")
 	}
-	e.listeners[event] = ch
-	return ch, nil
+	e.listeners[evt] = f
+	return nil
 }
 
-func (e *Goasynem) Subscribe(event string, f func(interface{})) (chan interface{}, error) {
-	ch, err := e.on(event)
+func (e *Emitter) Subscribe(event string, f func(interface{}) error) error {
+	err := e.on(event, f)
 	if err != nil {
-		return ch, err
+		return fmt.Errorf("error while registering subscriber: %s", err.Error())
 	}
-	go func() {
-		for p := range ch {
-			f(p)
-		}
-	}()
-	return ch, nil
+	return nil
 }
 
-func (e *Goasynem) Emit(event string, payload interface{}) (chan struct{}, error) {
-	e.mx.Lock()
-	defer e.mx.Unlock()
-	e.create()
-	done := make(chan struct{}, 1)
-	var wg sync.WaitGroup
-	var err error
+func (e *Emitter) Emit(evt string, d interface{}) chan error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
 
-	if ch, ok := e.listeners[event]; !ok {
-		return nil, errors.New("event not registered")
-	} else {
-		wg.Add(1)
-		go func(ch chan interface{}, d *interface{}) {
-			e.mx.Lock()
-			defer func() {
-				wg.Done()
-				e.mx.Unlock()
-			}()
-			select {
-			case <-done:
-				return
-			case ch <- payload:
-				return
-			default:
-				return
-			}
-		}(ch, &payload)
+	listener, ok := e.listeners[evt]
+	if !ok {
+		return nil
 	}
+	err := make(chan error, 1)
+	var wg sync.WaitGroup
+	wg.Add(1)
 
-	go func(done chan struct{}) {
-		defer func() {
-			recover()
-		}()
-		wg.Wait()
-		close(done)
-	}(done)
+	go func(f fn, errCh chan error) {
+		defer wg.Done()
+		err := f(d)
+		if err != nil {
+			errCh <- err
+		}
+		close(errCh)
+	}(listener, err)
 
-	return done, err
+	wg.Wait()
+	return err
 }
